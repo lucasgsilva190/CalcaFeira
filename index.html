@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Calculadora da Feira</title>
     <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   </head>
   <body class="theme-vercel">
     <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
@@ -19,7 +20,6 @@
         </div>
         <div style="display: flex; gap: 0.8rem; align-items: center;">
           <button type="button" class="btn btn-ghost sort-btn-inactive" id="sortBtn" aria-label="Alternar ordenação" title="Ordenação: Adição"><span class="sort-indicator"></span>A↔Z</button>
-          <button type="button" class="btn btn-ghost" id="clearAllBtn" aria-label="Limpar lista" title="Remover todos os itens">🗑️ Limpar</button>
           <div class="items-count-chip" aria-live="polite" aria-atomic="true">
             <span>Itens</span>
             <strong id="itemsCount">0</strong>
@@ -94,6 +94,11 @@
         </form>
       </section>
 
+      <section class="actions-section">
+        <button type="button" class="btn btn-ghost" id="clearAllBtn" aria-label="Limpar lista" title="Remover todos os itens">🗑️ Limpar Lista</button>
+        <button type="button" class="btn btn-success" id="generateReceiptBtn" aria-label="Gerar nota" title="Gerar nota fiscal em PDF" style="display: none;">📄 Gerar Nota Fiscal</button>
+      </section>
+
       <section class="list-section">
         <div id="emptyState" class="empty-state">
           <div class="empty-icon" aria-hidden="true">0 itens</div>
@@ -143,6 +148,7 @@
         submitBtn: document.getElementById("submitBtn"),
         cancelEdit: document.getElementById("cancelEdit"),
         clearAllBtn: document.getElementById("clearAllBtn"),
+        generateReceiptBtn: document.getElementById("generateReceiptBtn"),
         id: document.getElementById("itemId"),
         name: document.getElementById("name"),
         quantity: document.getElementById("quantity"),
@@ -299,6 +305,12 @@
         return isValid;
       }
 
+      function checkDuplicateItem(itemName) {
+        return state.items.find((item) => 
+          item.name.toLowerCase().trim() === itemName.toLowerCase().trim()
+        );
+      }
+
       function upsertItem(event) {
         event.preventDefault();
         const currentId = refs.id.value;
@@ -307,6 +319,22 @@
         if (!validateForm()) {
           showToast('❌ Verifique os erros do formulário', 'error', 3000);
           return;
+        }
+
+        // Se não está em modo de edição, verificar duplicatas
+        if (!currentId) {
+          const existingItem = checkDuplicateItem(data.name);
+          if (existingItem) {
+            const message = `Já existe um item chamado "${data.name}" na lista.\n\nDeseja atualizar este item ao invés de criar um novo?`;
+            if (confirm(message)) {
+              startEdit(existingItem.id);
+              showToast('📝 Aberto para edição. Atualize e salve', 'info', 3000);
+              return;
+            } else {
+              showToast('❌ Item não foi adicionado (item duplicado)', 'error', 3000);
+              return;
+            }
+          }
         }
 
         if (currentId) {
@@ -324,6 +352,97 @@
         clearForm();
       }
 
+      function generateReceiptPDF() {
+        if (state.items.length === 0) {
+          showToast('❌ Adicione itens para gerar a nota', 'error', 3000);
+          return;
+        }
+
+        const now = new Date();
+        const dateStr = now.toLocaleDateString('pt-BR');
+        const timeStr = now.toLocaleTimeString('pt-BR');
+        const receiptId = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+
+        let itemsHTML = '';
+        let total = 0;
+
+        state.items.forEach((item) => {
+          const subtotal = item.quantity * item.unitPriceCents;
+          total += subtotal;
+          const itemSubtotal = formatBRL(subtotal);
+          
+          itemsHTML += `
+            <tr>
+              <td style="padding: 2px 0; font-size: 9px; word-break: break-word; text-align: left;">${item.name}</td>
+              <td style="padding: 2px 0; font-size: 9px; text-align: center;">x${item.quantity}</td>
+              <td style="padding: 2px 0; font-size: 9px; text-align: right;">${itemSubtotal}</td>
+            </tr>`;
+        });
+
+        // Criar elemento para PDF
+        const receiptElement = document.createElement('div');
+        receiptElement.style.width = '280px';
+        receiptElement.style.margin = '0 auto';
+        receiptElement.style.fontFamily = "'Courier New', monospace";
+        receiptElement.style.backgroundColor = '#fff';
+        receiptElement.style.color = '#000';
+        receiptElement.style.padding = '0';
+        receiptElement.style.boxSizing = 'border-box';
+
+        receiptElement.innerHTML = `
+          <div style="text-align: center; padding: 8px; border-bottom: 2px dashed #000;">
+            <div style="font-size: 14px; font-weight: bold; margin-bottom: 2px;">🛒 FEIRA EXPRESS</div>
+            <div style="font-size: 8px;">Mercado da Comunidade</div>
+            <div style="font-size: 7px; margin-top: 2px;">CNPJ: 00.000.000/0000-00</div>
+          </div>
+          
+          <div style="border-bottom: 1px dashed #000; padding: 6px 8px; font-size: 8px; line-height: 1.4; text-align: center;">
+            <div>Data: ${dateStr}</div>
+            <div>Hora: ${timeStr}</div>
+            <div>ID: ${receiptId}</div>
+          </div>
+
+          <div style="padding: 6px 8px;">
+            <div style="border-bottom: 1px dashed #000; padding-bottom: 4px; margin-bottom: 4px; text-align: center;">
+              <table style="width: 100%; border-collapse: collapse; margin: 0 auto;">
+                <thead>
+                  <tr style="border-bottom: 1px dashed #000;">
+                    <th style="text-align: left; font-size: 8px; font-weight: bold; padding-bottom: 3px;">ITEM</th>
+                    <th style="text-align: center; font-size: 8px; font-weight: bold; padding-bottom: 3px;">QTD</th>
+                    <th style="text-align: right; font-size: 8px; font-weight: bold; padding-bottom: 3px;">VALOR</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${itemsHTML}
+                </tbody>
+              </table>
+            </div>
+            
+            <div style="border-top: 2px dashed #000; padding-top: 4px; margin-top: 4px; text-align: center;">
+              <div style="font-weight: bold; font-size: 10px;">
+                TOTAL: ${formatBRL(total)}
+              </div>
+            </div>
+          </div>
+
+          <div style="text-align: center; border-top: 1px dashed #000; padding: 8px; font-size: 8px;">
+            <div>✓ Obrigado pela compra!</div>
+            <div>Volte sempre! 😊</div>
+          </div>
+        `;
+
+        const opt = {
+          margin: 2,
+          filename: `nota-feira-${receiptId}.pdf`,
+          image: { type: 'jpeg', quality: 0.95 },
+          html2canvas: { scale: 2, backgroundColor: '#fff' },
+          jsPDF: { unit: 'mm', format: 'a6', orientation: 'portrait' }
+        };
+
+        html2pdf().set(opt).from(receiptElement).save();
+        showToast('✓ Nota fiscal gerada com sucesso!', 'success', 3000);
+      }
+
       function render() {
         refs.itemsList.innerHTML = "";
         const total = state.items.reduce(
@@ -332,6 +451,7 @@
         );
         refs.grandTotal.textContent = formatBRL(total);
         refs.emptyState.classList.toggle("hidden", state.items.length > 0);
+        refs.generateReceiptBtn.style.display = state.items.length > 0 ? "block" : "none";
         updateItemsCounter();
 
         const itemsToRender = state.sortAlphabetically
@@ -381,6 +501,7 @@
       refs.cancelEdit.addEventListener("click", clearForm);
       refs.sortBtn.addEventListener("click", toggleSort);
       refs.clearAllBtn.addEventListener("click", clearAllItems);
+      refs.generateReceiptBtn.addEventListener("click", generateReceiptPDF);
       refs.unitPrice.addEventListener("input", (event) => {
         event.target.value = digitsToCurrencyInput(event.target.value);
         updateSubtotalPreview();
