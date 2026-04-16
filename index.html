@@ -16,9 +16,16 @@
             <h1>Calculadora da Feira</h1>
           </div>
         </div>
-        <div class="total-chip" aria-live="polite" aria-atomic="true">
-          <span>Total atual</span>
-          <strong id="grandTotal">R$ 0,00</strong>
+        <div style="display: flex; gap: 0.8rem; align-items: center;">
+          <button type="button" class="btn btn-ghost sort-btn-inactive" id="sortBtn" aria-label="Alternar ordenação" title="Ordenação: Adição"><span class="sort-indicator"></span>A↔Z</button>
+          <div class="items-count-chip" aria-live="polite" aria-atomic="true">
+            <span>Itens</span>
+            <strong id="itemsCount">0</strong>
+          </div>
+          <div class="total-chip" aria-live="polite" aria-atomic="true">
+            <span>Total atual</span>
+            <strong id="grandTotal">R$ 0,00</strong>
+          </div>
         </div>
       </header>
 
@@ -105,7 +112,7 @@
 
     <script>
       const STORAGE_KEY = "shopping_list_v1";
-      const state = { items: [] };
+      const state = { items: [], sortAlphabetically: false };
 
       const refs = {
         form: document.getElementById("itemForm"),
@@ -121,6 +128,7 @@
         itemsList: document.getElementById("itemsList"),
         emptyState: document.getElementById("emptyState"),
         template: document.getElementById("itemTemplate"),
+        sortBtn: document.getElementById("sortBtn"),
       };
 
       function formatBRL(cents) {
@@ -246,8 +254,13 @@
         );
         refs.grandTotal.textContent = formatBRL(total);
         refs.emptyState.classList.toggle("hidden", state.items.length > 0);
+        updateItemsCounter();
 
-        state.items.forEach((item) => {
+        const itemsToRender = state.sortAlphabetically
+          ? [...state.items].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
+          : state.items;
+
+        itemsToRender.forEach((item) => {
           const subtotal = item.quantity * item.unitPriceCents;
           const node = refs.template.content.firstElementChild.cloneNode(true);
           node.dataset.id = item.id;
@@ -263,8 +276,32 @@
         });
       }
 
+      function toggleSort() {
+        state.sortAlphabetically = !state.sortAlphabetically;
+        localStorage.setItem("sort_mode", JSON.stringify(state.sortAlphabetically));
+        updateSortButtonUI();
+        render();
+      }
+
+      function updateSortButtonUI() {
+        const label = state.sortAlphabetically ? "Ordenação: Alfabética" : "Ordenação: Adição";
+        refs.sortBtn.title = label;
+        if (state.sortAlphabetically) {
+          refs.sortBtn.classList.remove("sort-btn-inactive");
+          refs.sortBtn.classList.add("sort-btn-active");
+        } else {
+          refs.sortBtn.classList.remove("sort-btn-active");
+          refs.sortBtn.classList.add("sort-btn-inactive");
+        }
+      }
+
+      function updateItemsCounter() {
+        document.getElementById("itemsCount").textContent = state.items.length;
+      }
+
       refs.form.addEventListener("submit", upsertItem);
       refs.cancelEdit.addEventListener("click", clearForm);
+      refs.sortBtn.addEventListener("click", toggleSort);
       refs.unitPrice.addEventListener("input", (event) => {
         event.target.value = digitsToCurrencyInput(event.target.value);
         updateSubtotalPreview();
@@ -273,6 +310,12 @@
       refs.name.addEventListener("input", updateSubtotalPreview);
 
       load();
+      const sortMode = localStorage.getItem("sort_mode");
+      if (sortMode !== null) {
+        state.sortAlphabetically = JSON.parse(sortMode);
+      }
+      updateSortButtonUI();
+      updateItemsCounter();
       clearForm();
       render();
     </script>
