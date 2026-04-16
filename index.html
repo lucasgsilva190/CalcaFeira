@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Calculadora da Feira</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="theme-vercel">
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <p class="eyebrow">Workspace pessoal</p>
+            <h1>Calculadora da Feira</h1>
+          </div>
+        </div>
+        <div class="total-chip" aria-live="polite" aria-atomic="true">
+          <span>Total atual</span>
+          <strong id="grandTotal">R$ 0,00</strong>
+        </div>
+      </header>
+
+      <section class="card form-card">
+        <div class="card-head">
+          <h2 id="formTitle">Adicionar item</h2>
+          <p>Atualizacao instantanea de subtotal e total</p>
+        </div>
+        <form id="itemForm" novalidate>
+          <input type="hidden" id="itemId" />
+
+          <label for="name">Nome do item</label>
+          <input
+            id="name"
+            name="name"
+            type="text"
+            placeholder="Ex: Tomate"
+            autocomplete="off"
+            required
+            maxlength="60"
+          />
+
+          <div class="row-2">
+            <div>
+              <label for="quantity">Quantidade</label>
+              <input
+                id="quantity"
+                name="quantity"
+                type="number"
+                inputmode="numeric"
+                min="1"
+                step="1"
+                placeholder="0"
+                required
+              />
+            </div>
+            <div>
+              <label for="unitPrice">Valor unitario</label>
+              <input
+                id="unitPrice"
+                name="unitPrice"
+                type="text"
+                inputmode="decimal"
+                placeholder="R$ 0,00"
+                required
+              />
+            </div>
+          </div>
+
+          <div class="preview-row">
+            <span>Subtotal do item</span>
+            <strong id="itemSubtotal">R$ 0,00</strong>
+          </div>
+
+          <div class="actions">
+            <button type="button" class="btn btn-ghost hidden" id="cancelEdit">Cancelar</button>
+            <button type="submit" class="btn btn-primary" id="submitBtn">Adicionar</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="list-section">
+        <div id="emptyState" class="empty-state">
+          <div class="empty-icon" aria-hidden="true">0 itens</div>
+          <p>Sua lista esta vazia</p>
+          <small>Comece adicionando o primeiro item para calcular sua compra.</small>
+        </div>
+        <ul id="itemsList" class="items-list" aria-live="polite"></ul>
+      </section>
+    </main>
+
+    <template id="itemTemplate">
+      <li class="item-card">
+        <button class="item-main" type="button">
+          <div class="item-title-row">
+            <h3 class="item-name"></h3>
+            <span class="item-total"></span>
+          </div>
+          <p class="item-details"></p>
+        </button>
+        <button class="delete-btn" type="button" aria-label="Remover item">Excluir</button>
+      </li>
+    </template>
+
+    <script>
+      const STORAGE_KEY = "shopping_list_v1";
+      const state = { items: [] };
+
+      const refs = {
+        form: document.getElementById("itemForm"),
+        formTitle: document.getElementById("formTitle"),
+        submitBtn: document.getElementById("submitBtn"),
+        cancelEdit: document.getElementById("cancelEdit"),
+        id: document.getElementById("itemId"),
+        name: document.getElementById("name"),
+        quantity: document.getElementById("quantity"),
+        unitPrice: document.getElementById("unitPrice"),
+        itemSubtotal: document.getElementById("itemSubtotal"),
+        grandTotal: document.getElementById("grandTotal"),
+        itemsList: document.getElementById("itemsList"),
+        emptyState: document.getElementById("emptyState"),
+        template: document.getElementById("itemTemplate"),
+      };
+
+      function formatBRL(cents) {
+        return (cents / 100).toLocaleString("pt-BR", {
+          style: "currency",
+          currency: "BRL",
+        });
+      }
+
+      function digitsToCurrencyInput(rawValue) {
+        const digits = rawValue.replace(/\D/g, "");
+        const cents = Number(digits || "0");
+        return `R$ ${new Intl.NumberFormat("pt-BR", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }).format(cents / 100)}`;
+      }
+
+      function parseCurrencyInput(value) {
+        const digits = value.replace(/\D/g, "");
+        return Number(digits || "0");
+      }
+
+      function uid() {
+        return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      }
+
+      function save() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state.items));
+      }
+
+      function load() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          state.items = raw ? JSON.parse(raw) : [];
+        } catch {
+          state.items = [];
+        }
+      }
+
+      function getFormData() {
+        const name = refs.name.value.trim();
+        const quantity = Number(refs.quantity.value);
+        const unitPriceCents = parseCurrencyInput(refs.unitPrice.value);
+        return { name, quantity, unitPriceCents };
+      }
+
+      function updateSubtotalPreview() {
+        const { quantity, unitPriceCents } = getFormData();
+        const subtotal = Math.max(0, quantity || 0) * unitPriceCents;
+        refs.itemSubtotal.textContent = formatBRL(subtotal);
+      }
+
+      function setEditingMode(editing) {
+        refs.formTitle.textContent = editing ? "Editar item" : "Adicionar item";
+        refs.submitBtn.textContent = editing ? "Salvar alteracoes" : "Adicionar";
+        refs.cancelEdit.classList.toggle("hidden", !editing);
+      }
+
+      function clearForm() {
+        refs.id.value = "";
+        refs.form.reset();
+        refs.unitPrice.value = "R$ 0,00";
+        setEditingMode(false);
+        updateSubtotalPreview();
+      }
+
+      function startEdit(itemId) {
+        const item = state.items.find((entry) => entry.id === itemId);
+        if (!item) return;
+        refs.id.value = item.id;
+        refs.name.value = item.name;
+        refs.quantity.value = item.quantity;
+        refs.unitPrice.value = digitsToCurrencyInput(String(item.unitPriceCents));
+        setEditingMode(true);
+        updateSubtotalPreview();
+        refs.name.focus();
+      }
+
+      function removeItem(itemId) {
+        const card = refs.itemsList.querySelector(`[data-id="${itemId}"]`);
+        if (card) {
+          card.classList.add("remove");
+          setTimeout(() => {
+            state.items = state.items.filter((entry) => entry.id !== itemId);
+            save();
+            render();
+          }, 220);
+          return;
+        }
+        state.items = state.items.filter((entry) => entry.id !== itemId);
+        save();
+        render();
+      }
+
+      function upsertItem(event) {
+        event.preventDefault();
+        const currentId = refs.id.value;
+        const data = getFormData();
+        if (!data.name || !Number.isFinite(data.quantity) || data.quantity < 1 || data.unitPriceCents < 1) {
+          refs.form.reportValidity();
+          return;
+        }
+
+        if (currentId) {
+          state.items = state.items.map((entry) =>
+            entry.id === currentId ? { ...entry, ...data } : entry
+          );
+        } else {
+          state.items.unshift({ id: uid(), ...data });
+        }
+
+        save();
+        render();
+        clearForm();
+      }
+
+      function render() {
+        refs.itemsList.innerHTML = "";
+        const total = state.items.reduce(
+          (sum, item) => sum + item.quantity * item.unitPriceCents,
+          0
+        );
+        refs.grandTotal.textContent = formatBRL(total);
+        refs.emptyState.classList.toggle("hidden", state.items.length > 0);
+
+        state.items.forEach((item) => {
+          const subtotal = item.quantity * item.unitPriceCents;
+          const node = refs.template.content.firstElementChild.cloneNode(true);
+          node.dataset.id = item.id;
+          node.classList.add("add");
+          node.querySelector(".item-name").textContent = item.name;
+          node.querySelector(".item-total").textContent = formatBRL(subtotal);
+          node.querySelector(".item-details").textContent = `${item.quantity} x ${formatBRL(
+            item.unitPriceCents
+          )}`;
+          node.querySelector(".item-main").addEventListener("click", () => startEdit(item.id));
+          node.querySelector(".delete-btn").addEventListener("click", () => removeItem(item.id));
+          refs.itemsList.appendChild(node);
+        });
+      }
+
+      refs.form.addEventListener("submit", upsertItem);
+      refs.cancelEdit.addEventListener("click", clearForm);
+      refs.unitPrice.addEventListener("input", (event) => {
+        event.target.value = digitsToCurrencyInput(event.target.value);
+        updateSubtotalPreview();
+      });
+      refs.quantity.addEventListener("input", updateSubtotalPreview);
+      refs.name.addEventListener("input", updateSubtotalPreview);
+
+      load();
+      clearForm();
+      render();
+    </script>
+  </body>
+</html>
